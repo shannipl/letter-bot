@@ -3,6 +3,7 @@ package formatter
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"spot-assistant/internal/core/dto/member"
 
@@ -111,4 +112,9 @@ func (f *DiscordFormatter) FormatOverbookedMemberNotification(
 	}
 
 	return msgBody.String()
+}
+
+func (f *DiscordFormatter) FormatReservationStartsNotificationMessage(spotName string, startAt time.Time, now time.Time) string {
+	minutesLeft := int(startAt.Sub(now).Minutes())
+	return fmt.Sprintf("Your hunt at **%s** starts in **%d** minutes (**%s**)!", spotName, minutesLeft, startAt.Format(stringsHelper.DcLongTimeFormat))
 }
