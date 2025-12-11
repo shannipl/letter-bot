@@ -34,6 +34,12 @@ type ReservationRepository interface {
 type SpotRepository interface {
 	// SelectAllSpots returns all spots.
 	SelectAllSpots(ctx context.Context) ([]*spot.Spot, error)
+
+	// SelectSpotByName returns a spot by name.
+	SelectSpotByName(ctx context.Context, name string) (*spot.Spot, error)
+
+	// SelectSpotsByNameLike returns spots matching the name pattern.
+	SelectSpotsByNameLike(ctx context.Context, namePattern string) ([]*spot.Spot, error)
 }
 
 type BotPort interface {
