@@ -490,3 +490,74 @@ func TestBookFailOnOverbookAuthorsReservation(t *testing.T) {
 	assert.NotNil(err)
 	assert.Empty(res)
 }
+
+func TestBook_PostMerge(t *testing.T) {
+	// given
+	assert := assert.New(t)
+	guild := &guild2.Guild{ID: "test-id"}
+	member := &member2.Member{ID: "test-member"}
+	spotInput := &spot.Spot{Name: "Prison -1", ID: 1}
+
+	// 1. Existing: 16:00 - 17:00
+	today := time.Now()
+	existingStart := time.Date(today.Year(), today.Month(), today.Day(), 16, 0, 0, 0, time.UTC)
+	existingEnd := time.Date(today.Year(), today.Month(), today.Day(), 17, 0, 0, 0, time.UTC)
+
+	// 2. Request: 17:00 - 18:00 (Adjacent)
+	// This will first trigger standard "Create" logic.
+	// Then "Merge" logic should activate.
+	requestStart := existingEnd
+	requestEnd := time.Date(today.Year(), today.Month(), today.Day(), 18, 0, 0, 0, time.UTC)
+
+	// Mocks
+	spotRepo := mocks.NewMockSpotRepository(t)
+	spotRepo.On("SelectAllSpots", mocks.ContextMock).Return([]*spot.Spot{spotInput}, nil)
+
+	repo := mocks.NewMockReservationRepository(t)
+
+	// A. Book flow selects upcoming to validate limit
+	existingRes := []*reservation.ReservationWithSpot{
+		{Reservation: reservation.Reservation{ID: 10, StartAt: existingStart, EndAt: existingEnd, SpotID: 1}, Spot: reservation.Spot{ID: 1, Name: "Prison -1"}},
+	}
+	repo.On("SelectUpcomingMemberReservationsWithSpots", mocks.ContextMock, guild, member).Return(existingRes, nil).Once()
+
+	// B. Book flow checks overlaps (for the request 17-18) -> None (adjacent doesn't overlap)
+	repo.On("SelectOverlappingReservations", mocks.ContextMock, spotInput.Name, requestStart, requestEnd, guild.ID).Return([]*reservation.Reservation{}, nil).Once()
+
+	// C. Book flow Creates the new reservation (standard logic)
+	// CreateAndDeleteConflicting returns the "ClippedOrRemoved" list.
+	// We simulate it returning nothing (no conflicts) but we assume it persisted the new one.
+	// BUT, our PostMerge logic fetches "SelectUpcoming..." again to find what to merge.
+	repo.On("CreateAndDeleteConflicting", mocks.ContextMock, member, guild, []*reservation.Reservation{}, int64(1), requestStart, requestEnd).Return([]*reservation.ClippedOrRemovedReservation{}, nil).Once()
+
+	// D. PostMerge Step 1: Fetch Upcoming again. This time it should return BOTH (existing + the new one we just "created")
+	// The new one (ID 11) is 17:00-18:00
+	updatedResList := []*reservation.ReservationWithSpot{
+		{Reservation: reservation.Reservation{ID: 10, StartAt: existingStart, EndAt: existingEnd, SpotID: 1}, Spot: reservation.Spot{ID: 1, Name: "Prison -1"}},
+		{Reservation: reservation.Reservation{ID: 11, StartAt: requestStart, EndAt: requestEnd, SpotID: 1}, Spot: reservation.Spot{ID: 1, Name: "Prison -1"}},
+	}
+	repo.On("SelectUpcomingMemberReservationsWithSpots", mocks.ContextMock, guild, member).Return(updatedResList, nil).Once()
+
+	// E. PostMerge Step 2: Merge logic detects adjancency (16-17 + 17-18) -> Merged: 16-18.
+	// It should Update ID 10 to 16-18
+	repo.On("UpdateReservation", mocks.ContextMock, int64(10), existingStart, requestEnd).Return(nil).Once()
+
+	// F. And Delete ID 11
+	repo.On("DeletePresentMemberReservation", mocks.ContextMock, guild, member, int64(11)).Return(nil).Once()
+
+	adapter := NewAdapter(spotRepo, repo, mocks.NewMockCommunicationService(t))
+
+	// when
+	_, err := adapter.Book(book.BookRequest{
+		Member:         member,
+		Guild:          guild,
+		Spot:           spotInput.Name,
+		StartAt:        requestStart,
+		EndAt:          requestEnd,
+		Overbook:       true, // Just to pass params, logic shouldn't care if conflicts=0
+		HasPermissions: true,
+	})
+
+	// assert
+	assert.Nil(err)
+}
