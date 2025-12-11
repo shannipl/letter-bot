@@ -37,18 +37,34 @@ func (a *Adapter) IsOnline(guildID, characterName string) bool {
 		return false
 	}
 
-	names := strings.Split(characterName, "/")
-	for i := range names {
-		names[i] = strings.TrimSpace(names[i])
+	// Optimization: Fast path for single name (majority of cases)
+	if idx := strings.IndexByte(characterName, '/'); idx == -1 {
+		candidate := strings.TrimSpace(characterName)
+		candidate = strings.ToLower(candidate)
+		_, ok := players[candidate]
+		return ok
 	}
 
-	for _, candidate := range names {
+	// Helper closure to check a single name segment
+	isPlayerOnline := func(name string) bool {
+		candidate := strings.TrimSpace(name)
 		candidate = strings.ToLower(candidate)
-		if _, ok := players[candidate]; ok {
-			return true
+		_, ok := players[candidate]
+		return ok
+	}
+
+	// Iterate over slashed names without allocating a slice
+	start := 0
+	for i := 0; i < len(characterName); i++ {
+		if characterName[i] == '/' {
+			if isPlayerOnline(characterName[start:i]) {
+				return true
+			}
+			start = i + 1
 		}
 	}
-	return false
+	// Check the last segment
+	return isPlayerOnline(characterName[start:])
 }
 
 func (a *Adapter) PlayerStatus(guildID, characterName string) summary.OnlineStatus {
