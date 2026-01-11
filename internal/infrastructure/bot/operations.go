@@ -479,6 +479,10 @@ func (b *Bot) SendLetterMessageGuildChannel(guild *guild.Guild, channel *discord
 		}
 	}
 
+	return b.processEmbedUpdates(ctx, guild, channel, sum, dcSession, embeds, existingEmbeds)
+}
+
+func (b *Bot) processEmbedUpdates(ctx context.Context, guild *guild.Guild, channel *discord.Channel, sum *summary.Summary, dcSession *discordgo.Session, embeds []*discordgo.MessageEmbed, existingEmbeds []*summarytracker.TrackedMessage) error {
 	commonLen := min(len(existingEmbeds), len(embeds))
 
 	b.log.Debugf("Editing %d embeds, adding %d new, deleting %d old",
@@ -491,7 +495,7 @@ func (b *Bot) SendLetterMessageGuildChannel(guild *guild.Guild, channel *discord
 		edit := discordgo.NewMessageEdit(channel.ID, existingEmbeds[i].MessageID)
 		edit.SetEmbeds([]*discordgo.MessageEmbed{embeds[i]})
 
-		if _, err = dcSession.ChannelMessageEditComplex(edit); err != nil {
+		if _, err := dcSession.ChannelMessageEditComplex(edit); err != nil {
 			b.log.Warnf("Failed to edit embed %d (msg %s), falling back to fresh send: %v", i, existingEmbeds[i].MessageID, err)
 			return b.sendFreshMessages(guild, channel, sum, dcSession, embeds)
 		} else {
