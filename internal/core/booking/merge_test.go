@@ -1,8 +1,6 @@
 package booking
 
 import (
-	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -16,319 +14,192 @@ import (
 	"spot-assistant/internal/core/dto/reservation"
 )
 
-func TestCalculateBookingMerge(t *testing.T) {
-	today := time.Now()
-	mkTime := func(h, m int) time.Time {
-		return time.Date(today.Year(), today.Month(), today.Day(), h, m, 0, 0, time.UTC)
+func TestAnalyzeAdjacentReservations(t *testing.T) {
+	t.Parallel()
+	now := time.Now()
+
+	createRes := func(id int64, start, end time.Time) *reservation.ReservationWithSpot {
+		return &reservation.ReservationWithSpot{
+			Reservation: reservation.Reservation{ID: id, StartAt: start, EndAt: end},
+			Spot:        reservation.Spot{ID: 1, Name: "test-spot"},
+		}
 	}
 
 	tests := []struct {
-		name           string
-		reservations   []*reservation.ReservationWithSpot
-		spotName       string
-		startAt        time.Time
-		endAt          time.Time
-		wantStart      time.Time
-		wantEnd        time.Time
-		wantMergedIDs  []int64
-		wantUnaffected int
+		name               string
+		reservations       []*reservation.ReservationWithSpot
+		inputStart         time.Time
+		inputEnd           time.Time
+		wantShouldMerge    bool
+		wantStart          time.Time
+		wantEnd            time.Time
+		wantReservationIDs []int64
 	}{
 		{
-			name:           "no existing reservations",
-			reservations:   []*reservation.ReservationWithSpot{},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(10, 0),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  nil,
-			wantUnaffected: 0,
+			name:               "Single reservation returns false",
+			reservations:       []*reservation.ReservationWithSpot{createRes(1, now, now.Add(time.Hour))},
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    false,
+			wantStart:          now,
+			wantEnd:            now.Add(time.Hour),
+			wantReservationIDs: []int64{1},
 		},
 		{
-			name: "no overlap - gap exceeds tolerance",
+			name: "Two unrelated reservations returns false",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(8, 0), EndAt: mkTime(9, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(3*time.Hour), now.Add(4*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 2),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(10, 2),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  nil,
-			wantUnaffected: 1,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    false,
+			wantStart:          now,
+			wantEnd:            now.Add(time.Hour),
+			wantReservationIDs: []int64{1},
 		},
 		{
-			name: "exact adjacency - append",
+			name: "Exact adjacency after returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(time.Hour), now.Add(2*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  []int64{1},
-			wantUnaffected: 0,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now,
+			wantEnd:            now.Add(2 * time.Hour),
+			wantReservationIDs: []int64{1, 2},
 		},
 		{
-			name: "exact adjacency - prepend",
+			name: "Exact adjacency before returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(11, 0), EndAt: mkTime(12, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(-1*time.Hour), now),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(10, 0),
-			wantEnd:        mkTime(12, 0),
-			wantMergedIDs:  []int64{1},
-			wantUnaffected: 0,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now.Add(-1 * time.Hour),
+			wantEnd:            now.Add(time.Hour),
+			wantReservationIDs: []int64{1, 2},
 		},
 		{
-			name: "1 minute gap - within tolerance",
+			name: "Gap within tolerance returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(time.Hour).Add(30*time.Second), now.Add(2*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 1),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  []int64{1},
-			wantUnaffected: 0,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now,
+			wantEnd:            now.Add(2 * time.Hour),
+			wantReservationIDs: []int64{1, 2},
 		},
 		{
-			name: "overlap",
+			name: "Gap exactly at tolerance returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 30)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(time.Hour).Add(time.Minute), now.Add(2*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  []int64{1},
-			wantUnaffected: 0,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now,
+			wantEnd:            now.Add(2 * time.Hour),
+			wantReservationIDs: []int64{1, 2},
 		},
 		{
-			name: "fully contained",
+			name: "Gap exceeding tolerance returns false",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(12, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(time.Hour).Add(time.Minute).Add(time.Nanosecond), now.Add(2*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(12, 0),
-			wantMergedIDs:  []int64{1},
-			wantUnaffected: 0,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    false,
+			wantStart:          now,
+			wantEnd:            now.Add(time.Hour),
+			wantReservationIDs: []int64{1},
 		},
 		{
-			name: "different spot - no merge",
+			name: "Bridging two reservations returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(10, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: "Spot-2"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(-1*time.Hour), now),
+				createRes(3, now.Add(time.Hour), now.Add(2*time.Hour)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(10, 0),
-			wantEnd:        mkTime(11, 0),
-			wantMergedIDs:  nil,
-			wantUnaffected: 1,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now.Add(-1 * time.Hour),
+			wantEnd:            now.Add(2 * time.Hour),
+			wantReservationIDs: []int64{1, 2, 3},
 		},
 		{
-			name: "bridge multiple reservations",
+			name: "Subset violation returns true",
 			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
-				{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(11, 0), EndAt: mkTime(12, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
+				createRes(1, now, now.Add(time.Hour)),
+				createRes(2, now.Add(-30*time.Minute), now.Add(30*time.Minute)),
 			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(12, 0),
-			wantMergedIDs:  []int64{1, 2},
-			wantUnaffected: 0,
-		},
-		{
-			name: "mixed spots - only merge matching",
-			reservations: []*reservation.ReservationWithSpot{
-				{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
-				{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(10, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: "Spot-2"}},
-				{Reservation: reservation.Reservation{ID: 3, StartAt: mkTime(11, 0), EndAt: mkTime(12, 0)}, Spot: reservation.Spot{Name: "Spot-1"}},
-			},
-			spotName:       "Spot-1",
-			startAt:        mkTime(10, 0),
-			endAt:          mkTime(11, 0),
-			wantStart:      mkTime(9, 0),
-			wantEnd:        mkTime(12, 0),
-			wantMergedIDs:  []int64{1, 3},
-			wantUnaffected: 1,
+			inputStart:         now,
+			inputEnd:           now.Add(time.Hour),
+			wantShouldMerge:    true,
+			wantStart:          now.Add(-30 * time.Minute),
+			wantEnd:            now.Add(time.Hour),
+			wantReservationIDs: []int64{1, 2},
 		},
 	}
 
 	for _, tt := range tests {
+		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
-			gotStart, gotEnd, gotIDs, gotUnaffected := calculateBookingMerge(
-				tt.reservations,
-				tt.spotName,
-				tt.startAt,
-				tt.endAt,
-			)
+			t.Parallel()
+			got := analyzeAdjacentReservations(tt.reservations, tt.inputStart, tt.inputEnd)
 
-			assert.Equal(t, tt.wantStart, gotStart)
-			assert.Equal(t, tt.wantEnd, gotEnd)
-			assert.ElementsMatch(t, tt.wantMergedIDs, gotIDs)
-			assert.Len(t, gotUnaffected, tt.wantUnaffected)
+			assert.Equal(t, tt.wantShouldMerge, got.ShouldMerge)
+			assert.WithinDuration(t, tt.wantStart, got.MergedStartAt, time.Second)
+			assert.WithinDuration(t, tt.wantEnd, got.MergedEndAt, time.Second)
+			assert.ElementsMatch(t, tt.wantReservationIDs, got.MergedReservationIDs)
 		})
 	}
 }
 
 func TestMergeAdjacentReservations(t *testing.T) {
-	today := time.Now()
-	mkTime := func(h, m int) time.Time {
-		return time.Date(today.Year(), today.Month(), today.Day(), h, m, 0, 0, time.UTC)
+	assert := assert.New(t)
+	mockRepo := mocks.NewMockReservationRepository(t)
+	mockSpotRepo := mocks.NewMockSpotRepository(t)
+	mockComm := mocks.NewMockCommunicationService(t)
+	adapter := NewAdapter(mockSpotRepo, mockRepo, mockComm)
+	now := time.Now()
+
+	createRes := func(id int64, start, end time.Time) *reservation.ReservationWithSpot {
+		return &reservation.ReservationWithSpot{
+			Reservation: reservation.Reservation{ID: id, StartAt: start, EndAt: end},
+			Spot:        reservation.Spot{ID: 1, Name: "test-spot"},
+		}
 	}
 
-	guildID := &guild.Guild{ID: "g1"}
-	memberID := &member.Member{ID: "m1"}
-	spotName := "Spot-1"
+	req := book.BookRequest{
+		Guild:   &guild.Guild{ID: "g1"},
+		Member:  &member.Member{ID: "m1"},
+		Spot:    "test-spot",
+		StartAt: now,
+		EndAt:   now.Add(time.Hour),
+	}
 
-	t.Run("no merge needed", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
+	reservations := []*reservation.ReservationWithSpot{
+		createRes(10, now, now.Add(time.Hour)),
+		createRes(11, now.Add(time.Hour), now.Add(2*time.Hour)),
+	}
 
-		existing := []*reservation.ReservationWithSpot{
-			{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(8, 0), EndAt: mkTime(9, 0)}, Spot: reservation.Spot{Name: spotName}},
-		}
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(existing, nil)
+	mockRepo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, req.Guild, req.Member).Return(reservations, nil)
+	mockRepo.On("UpdateReservation", mock.Anything, int64(10), now, now.Add(2*time.Hour)).Return(nil)
+	mockRepo.On("DeletePresentMemberReservation", mock.Anything, req.Guild, req.Member, int64(11)).Return(nil)
 
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(10, 0),
-			EndAt:   mkTime(11, 0),
-		}
+	err := adapter.mergeAdjacentReservations(req)
 
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.NoError(t, err)
-	})
-
-	t.Run("simple merge - two adjacent reservations", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
-
-		existing := []*reservation.ReservationWithSpot{
-			{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: spotName}},
-			{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(10, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: spotName}},
-		}
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(existing, nil)
-		repo.On("UpdateReservation", mock.Anything, int64(1), mkTime(9, 0), mkTime(11, 0)).Return(nil)
-		repo.On("DeletePresentMemberReservation", mock.Anything, guildID, memberID, int64(2)).Return(nil)
-
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(10, 0),
-			EndAt:   mkTime(11, 0),
-		}
-
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.NoError(t, err)
-	})
-
-	t.Run("bridge three reservations", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
-
-		existing := []*reservation.ReservationWithSpot{
-			{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: spotName}},
-			{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(10, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: spotName}},
-			{Reservation: reservation.Reservation{ID: 3, StartAt: mkTime(11, 0), EndAt: mkTime(12, 0)}, Spot: reservation.Spot{Name: spotName}},
-		}
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(existing, nil)
-		repo.On("UpdateReservation", mock.Anything, int64(1), mkTime(9, 0), mkTime(12, 0)).Return(nil)
-		repo.On("DeletePresentMemberReservation", mock.Anything, guildID, memberID, int64(2)).Return(nil)
-		repo.On("DeletePresentMemberReservation", mock.Anything, guildID, memberID, int64(3)).Return(nil)
-
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(10, 0),
-			EndAt:   mkTime(11, 0),
-		}
-
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.NoError(t, err)
-	})
-
-	t.Run("validation error - merged duration exceeds limit", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
-
-		existing := []*reservation.ReservationWithSpot{
-			{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: spotName}},
-			{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(11, 0), EndAt: mkTime(13, 0)}, Spot: reservation.Spot{Name: spotName}},
-		}
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(existing, nil)
-
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(11, 0),
-			EndAt:   mkTime(13, 0),
-		}
-
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "reservation cannot take more than 3 hours")
-	})
-
-	t.Run("repository error - select fails", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
-
-		repoErr := fmt.Errorf("database connection failed")
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(nil, repoErr)
-
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(10, 0),
-			EndAt:   mkTime(11, 0),
-		}
-
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.Error(t, err)
-		assert.Equal(t, repoErr, err)
-	})
-
-	t.Run("repository error - update fails", func(t *testing.T) {
-		repo := mocks.NewMockReservationRepository(t)
-		adapter := NewAdapter(nil, repo, nil)
-
-		existing := []*reservation.ReservationWithSpot{
-			{Reservation: reservation.Reservation{ID: 1, StartAt: mkTime(9, 0), EndAt: mkTime(10, 0)}, Spot: reservation.Spot{Name: spotName}},
-			{Reservation: reservation.Reservation{ID: 2, StartAt: mkTime(10, 0), EndAt: mkTime(11, 0)}, Spot: reservation.Spot{Name: spotName}},
-		}
-		updateErr := fmt.Errorf("update failed")
-		repo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, guildID, memberID).Return(existing, nil)
-		repo.On("UpdateReservation", mock.Anything, int64(1), mkTime(9, 0), mkTime(11, 0)).Return(updateErr)
-
-		req := book.BookRequest{
-			Guild:   guildID,
-			Member:  memberID,
-			Spot:    spotName,
-			StartAt: mkTime(10, 0),
-			EndAt:   mkTime(11, 0),
-		}
-
-		err := adapter.mergeAdjacentReservations(context.Background(), req)
-		assert.Error(t, err)
-		assert.Equal(t, updateErr, err)
-	})
+	assert.NoError(err)
+	mockRepo.AssertExpectations(t)
 }

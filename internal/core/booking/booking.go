@@ -143,7 +143,7 @@ func (a *Adapter) Book(request book.BookRequest) ([]*reservation.ClippedOrRemove
 		go a.commSrv.NotifyOverbookedMember(request, res)
 	}
 
-	if err := a.mergeAdjacentReservations(context.Background(), request); err != nil {
+	if err := a.mergeAdjacentReservations(request); err != nil {
 		return nil, fmt.Errorf("could not merge reservations: %w", err)
 	}
 
