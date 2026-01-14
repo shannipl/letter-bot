@@ -1,11 +1,11 @@
 package booking
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 
 	"spot-assistant/internal/common/test/mocks"
 	"spot-assistant/internal/core/dto/book"
@@ -194,11 +194,11 @@ func TestMergeAdjacentReservations(t *testing.T) {
 		createRes(11, now.Add(time.Hour), now.Add(2*time.Hour)),
 	}
 
-	mockRepo.On("SelectUpcomingMemberReservationsWithSpots", mock.Anything, req.Guild, req.Member).Return(reservations, nil)
-	mockRepo.On("UpdateReservation", mock.Anything, int64(10), now, now.Add(2*time.Hour)).Return(nil)
-	mockRepo.On("DeletePresentMemberReservation", mock.Anything, req.Guild, req.Member, int64(11)).Return(nil)
+	mockRepo.On("SelectUpcomingMemberReservationsWithSpots", mocks.ContextMock, req.Guild, req.Member).Return(reservations, nil)
+	mockRepo.On("UpdateReservation", mocks.ContextMock, int64(10), now, now.Add(2*time.Hour)).Return(nil)
+	mockRepo.On("DeletePresentMemberReservation", mocks.ContextMock, req.Guild, req.Member, int64(11)).Return(nil)
 
-	err := adapter.mergeAdjacentReservations(req)
+	err := adapter.mergeAdjacentReservations(context.Background(), req)
 
 	assert.NoError(err)
 	mockRepo.AssertExpectations(t)

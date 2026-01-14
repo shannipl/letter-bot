@@ -33,8 +33,8 @@ func (m *MergeResult) ReservationsToDelete() []int64 {
 
 const adjacencyTolerance = time.Minute
 
-func (a *Adapter) mergeAdjacentReservations(request book.BookRequest) error {
-	upcoming, err := a.reservationRepo.SelectUpcomingMemberReservationsWithSpots(context.Background(), request.Guild, request.Member)
+func (a *Adapter) mergeAdjacentReservations(ctx context.Context, request book.BookRequest) error {
+	upcoming, err := a.reservationRepo.SelectUpcomingMemberReservationsWithSpots(ctx, request.Guild, request.Member)
 	if err != nil {
 		return fmt.Errorf("failed to fetch upcoming reservations: %w", err)
 	}
@@ -50,7 +50,7 @@ func (a *Adapter) mergeAdjacentReservations(request book.BookRequest) error {
 		return fmt.Errorf("merged reservation would exceed maximum length: %w", err)
 	}
 
-	return a.executeMerge(request, mergeResult)
+	return a.executeMerge(ctx, request, mergeResult)
 }
 
 func analyzeAdjacentReservations(
@@ -73,14 +73,14 @@ func analyzeAdjacentReservations(
 	return result
 }
 
-func (a *Adapter) executeMerge(request book.BookRequest, result *MergeResult) error {
+func (a *Adapter) executeMerge(ctx context.Context, request book.BookRequest, result *MergeResult) error {
 	primaryID := result.PrimaryReservationID()
 
-	if err := a.updateTimeOfMergedReservation(primaryID, result.MergedStartAt, result.MergedEndAt); err != nil {
+	if err := a.updateTimeOfMergedReservation(ctx, primaryID, result.MergedStartAt, result.MergedEndAt); err != nil {
 		return fmt.Errorf("failed to update primary reservation %d: %w", primaryID, err)
 	}
 
-	if err := a.deleteMergedReservations(request, result.ReservationsToDelete()); err != nil {
+	if err := a.deleteMergedReservations(ctx, request, result.ReservationsToDelete()); err != nil {
 		return fmt.Errorf("failed to delete merged reservations: %w", err)
 	}
 
@@ -131,13 +131,13 @@ func includeReservationInMerge(result *MergeResult, r *reservation.ReservationWi
 	}
 }
 
-func (a *Adapter) updateTimeOfMergedReservation(primaryID int64, startAt, endAt time.Time) error {
-	return a.reservationRepo.UpdateReservation(context.Background(), primaryID, startAt, endAt)
+func (a *Adapter) updateTimeOfMergedReservation(ctx context.Context, primaryID int64, startAt, endAt time.Time) error {
+	return a.reservationRepo.UpdateReservation(ctx, primaryID, startAt, endAt)
 }
 
-func (a *Adapter) deleteMergedReservations(request book.BookRequest, idsToDelete []int64) error {
+func (a *Adapter) deleteMergedReservations(ctx context.Context, request book.BookRequest, idsToDelete []int64) error {
 	for _, idToDelete := range idsToDelete {
-		if err := a.reservationRepo.DeletePresentMemberReservation(context.Background(), request.Guild, request.Member, idToDelete); err != nil {
+		if err := a.reservationRepo.DeletePresentMemberReservation(ctx, request.Guild, request.Member, idToDelete); err != nil {
 			return err
 		}
 	}

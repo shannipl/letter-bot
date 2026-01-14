@@ -528,7 +528,7 @@ func TestBook_PostMerge(t *testing.T) {
 	requestEnd := time.Date(today.Year(), today.Month(), today.Day(), 18, 0, 0, 0, time.UTC)
 
 	spotRepo := mocks.NewMockSpotRepository(t)
-	spotRepo.On("SelectAllSpots", mocks.ContextMock).Return([]*spot.Spot{spotInput}, nil)
+	spotRepo.On("SelectSpotByName", mocks.ContextMock, spotInput.Name).Return(spotInput, nil)
 
 	repo := mocks.NewMockReservationRepository(t)
 
